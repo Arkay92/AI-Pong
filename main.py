@@ -8,51 +8,58 @@ from tensorflow.keras import layers, models
 
 model_path = 'pong_ai_model.keras'
 model = None
-
-# Initialize game data list and set up the window
-game_data, game_on, ai_delay = [], True, 0
+turtle_initialized = False
 win = turtle.Screen()
-win.title("Python Pong")
-win.bgcolor("black")
-win.setup(width=600, height=600)
 
-# Score variables and display
-player_score, computer_score = 0, 0
-score_display = turtle.Turtle()
-score_display.speed(0)
-score_display.color("white")
-score_display.penup()
-score_display.hideturtle()
-score_display.goto(0, 260)
-score_display.write("Computer: 0  Player: 0", align="center", font=("Courier", 24, "normal"))
+def initialize_game():
+    global turtle_initialized
+    if not turtle_initialized:
+        # Initialize game data list and set up the window
+        global win, score_display, left_paddle, right_paddle, ball, game_data, game_on, ai_delay, player_score, computer_score, model
+        game_data, game_on, ai_delay = [], True, 0
+        win.title("Python Pong")
+        win.bgcolor("black")
+        win.setup(width=600, height=600)
 
-# Left paddle
-left_paddle = turtle.Turtle()
-left_paddle.speed(0)
-left_paddle.shape("square")
-left_paddle.color("white")
-left_paddle.shapesize(stretch_wid=6, stretch_len=1)
-left_paddle.penup()
-left_paddle.goto(-250, 0)
+        # Score variables and display
+        player_score, computer_score = 0, 0
+        score_display = turtle.Turtle()
+        score_display.speed(0)
+        score_display.color("white")
+        score_display.penup()
+        score_display.hideturtle()
+        score_display.goto(0, 260)
+        score_display.write("Computer: 0  Player: 0", align="center", font=("Courier", 24, "normal"))
 
-# Right paddle
-right_paddle = turtle.Turtle()
-right_paddle.speed(0)
-right_paddle.shape("square")
-right_paddle.color("white")
-right_paddle.shapesize(stretch_wid=6, stretch_len=1)
-right_paddle.penup()
-right_paddle.goto(250, 0)
+        # Left paddle
+        left_paddle = turtle.Turtle()
+        left_paddle.speed(0)
+        left_paddle.shape("square")
+        left_paddle.color("white")
+        left_paddle.shapesize(stretch_wid=6, stretch_len=1)
+        left_paddle.penup()
+        left_paddle.goto(-250, 0)
 
-# Ball
-ball = turtle.Turtle()
-ball.speed(40)
-ball.shape("square")
-ball.color("white")
-ball.penup()
-ball.goto(0, 0)
-ball.dx = 5.5  # Increased initial ball speed
-ball.dy = -5.5
+        # Right paddle
+        right_paddle = turtle.Turtle()
+        right_paddle.speed(0)
+        right_paddle.shape("square")
+        right_paddle.color("white")
+        right_paddle.shapesize(stretch_wid=6, stretch_len=1)
+        right_paddle.penup()
+        right_paddle.goto(250, 0)
+
+        # Ball
+        ball = turtle.Turtle()
+        ball.speed(40)
+        ball.shape("square")
+        ball.color("white")
+        ball.penup()
+        ball.goto(0, 0)
+        ball.dx = 5.5  # Increased initial ball speed
+        ball.dy = -5.5
+
+        turtle_initialized = True
 
 # Modified functions to move paddles to record events
 def left_paddle_up():
@@ -373,6 +380,7 @@ def finalize_game():
     reset_game()
 
 def main_game_loop():
+    initialize_game()  # Ensure Turtle graphics and game elements are initialized only once
     global game_on, player_score, computer_score  # Declare global variables
 
     while True:
