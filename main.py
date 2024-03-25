@@ -1,12 +1,10 @@
-import turtle, random, time, json, os, threading
+import turtle, random, time, json, os, threading, multiprocessing
+
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, models
-
-BALL_SPEED = 5.5
-POINTS_NEEDED = 2
-
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 model_path = 'pong_ai_model.keras'
 model = None
@@ -53,8 +51,8 @@ ball.shape("square")
 ball.color("white")
 ball.penup()
 ball.goto(0, 0)
-ball.dx = BALL_SPEED  # Increased initial ball speed
-ball.dy = -BALL_SPEED
+ball.dx = 5.5  # Increased initial ball speed
+ball.dy = -5.5
 
 # Modified functions to move paddles to record events
 def left_paddle_up():
@@ -131,39 +129,74 @@ def update_score(player, computer):
     score_display.write("Computer: {}  Player: {}".format(computer, player), align="center", font=("Courier", 24, "normal"))
 
     # Check for a win
-    if player_score >= POINTS_NEEDED:
+    if player_score >= 10:
         declare_winner("Player")
-    elif computer_score >= POINTS_NEEDED:
+    elif computer_score >= 10:
         declare_winner("Computer")
 
 def reset_game():
     global player_score, computer_score, ball, left_paddle, right_paddle
     player_score, computer_score = 0, 0
     ball.goto(0, 0)
-    ball.dx = BALL_SPEED * random.choice([-1, 1])
-    ball.dy = BALL_SPEED * random.choice([-1, 1])
+    ball.dx = 5.5 * random.choice([-1, 1])
+    ball.dy = 5.5 * random.choice([-1, 1])
     left_paddle.goto(-250, 0)
     right_paddle.goto(250, 0)
     score_display.clear()
     score_display.write("Computer: 0  Player: 0", align="center", font=("Courier", 24, "normal"))
 
 def declare_winner(winner):
-    global countdown_timer
-    score_display.clear()
-    score_display.goto(0, 260)
+    global game_data  # Ensure game_data is accessible
+    score_display.clear()  # Clear the score display
+    score_display.goto(0, 260)  # Move score display back to the top
     score_display.write(f"{winner} wins!", align="center", font=("Courier", 32, "normal"))
-    countdown_timer = 120  # Sets a 2-second countdown assuming a 60 FPS game loop
+    time.sleep(2)  # Give some time to see the final message
+    
+    # Train model on win before resetting the game
+    train_model_on_win()
 
-# Update AI paddle movement
+    reset_game()  # Reset game for a new round instead of ending it
+
+def train_model_on_win():
+    if len(game_data) > 100:
+        # Serialize game data to a temporary JSON file
+        with open('temp_game_data.json', 'w') as f:
+            json.dump(game_data, f)
+
+        # Start the training process
+        training_process = multiprocessing.Process(target=background_model_training_process, args=('temp_game_data.json',))
+        training_process.start()
+    else:
+        print("Insufficient data for training.")
+
+def background_model_training_process(data_file):
+    # Load game data from the temporary file
+    with open(data_file, 'r') as f:
+        game_data = json.load(f)
+
+    # Preprocess the data
+    features, labels = preprocess_data(game_data)
+
+    if len(features) > 0 and len(labels) > 0:
+        # Load or create the model
+        if os.path.exists(model_path):
+            model = tf.keras.models.load_model(model_path)
+        else:
+            model = create_model(input_shape=features.shape[1:])
+        
+        # Train the model
+        model.fit(features, labels, epochs=10, verbose=1)
+        
+        # Save the model
+        model.save(model_path)
+    else:
+        print("Insufficient data for training after preprocessing.")
+
 def update_ai_paddle():
     global ai_delay, ai_target_y, model  # Ensure model and ai_target_y are accessible
 
     ball_x, ball_y = ball.xcor(), ball.ycor()
     paddle_y = left_paddle.ycor()
-
-    # Initialize ai_target_y at the beginning of the function
-    # You can set it to the current paddle position as a default
-    ai_target_y = paddle_y
 
     # Normalize features
     features = np.array([[ball_x / 600, ball_y / 600, paddle_y / 300]])
@@ -176,42 +209,43 @@ def update_ai_paddle():
         action = np.argmax(prediction)  # 0 for 'paddle_up', 1 for 'paddle_down'
         confidence = np.max(prediction)  # Confidence of the chosen action
 
-        # Execute the action and record the event with confidence score
-        if action == 0 and paddle_y < 250:  # 'paddle_up'
-            left_paddle_up()
-            game_data.append({'features': features.tolist(), 'action': 'up', 'confidence': confidence, 'timestamp': time.time()})
-        elif action == 1 and paddle_y > -240:  # 'paddle_down'
-            left_paddle_down()
-            game_data.append({'features': features.tolist(), 'action': 'down', 'confidence': confidence, 'timestamp': time.time()})
-    else:
-        # Fallback AI logic based on difficulty and randomness
-        if ai_delay <= 0:
-            difficulty = max(1, 6 - player_score // 2)
-            ai_error = random.randint(-50, 50)
-            if random.randint(0, difficulty) > 0:
-                ai_target_y = ball.ycor() + ai_error  # Now ai_target_y is guaranteed to be defined
-                
-                # Adjust the decrement in ai_delay based on difficulty
-                ai_delay -= 0.02 * (7 - difficulty)
-
-                # Ensure ai_delay does not go below 0
-                ai_delay = max(ai_delay, 0)
-
-                # Record AI decision event for future training
-                game_data.append({'event': 'ai_decision', 'ai_target_y': ai_target_y, 'ai_error': ai_error, 'difficulty': difficulty, 'timestamp': time.time()})
-        else:
-            ai_delay -= 0.02  # Normal decrement of ai_delay
-
-        # Use ai_target_y after it's been defined
-        if abs(paddle_y - ai_target_y) > 30:
-            if paddle_y < ai_target_y:
+        # Execute the action based on model's prediction if confidence is high enough
+        if confidence > 0.5:  # Threshold confidence level can be adjusted
+            if action == 0 and paddle_y < 250:  # 'paddle_up'
                 left_paddle_up()
-                # Record AI movement event
-                game_data.append({'event': 'ai_paddle_up', 'paddle_y': paddle_y + 20, 'ball_pos': (ball_x, ball_y), 'timestamp': time.time()})
-            elif paddle_y > ai_target_y:
+                game_data.append({'features': features.tolist(), 'action': 'up', 'confidence': confidence, 'timestamp': time.time()})
+            elif action == 1 and paddle_y > -240:  # 'paddle_down'
                 left_paddle_down()
-                # Record AI movement event
-                game_data.append({'event': 'ai_paddle_down', 'paddle_y': paddle_y - 20, 'ball_pos': (ball_x, ball_y), 'timestamp': time.time()})
+                game_data.append({'features': features.tolist(), 'action': 'down', 'confidence': confidence, 'timestamp': time.time()})
+            return  # Exit the function if action was taken based on model's prediction
+    # If model is None, not confident enough, or action not taken due to paddle position limits, use fallback AI
+    if ai_delay <= 0:
+        difficulty = max(1, 6 - player_score // 2)
+        ai_error = random.randint(-50, 50)
+        if random.randint(0, difficulty) > 0:
+            ai_target_y = ball.ycor() + ai_error  # Now ai_target_y is guaranteed to be defined
+            
+            # Adjust the decrement in ai_delay based on difficulty
+            ai_delay -= 0.02 * (7 - difficulty)
+
+            # Ensure ai_delay does not go below 0
+            ai_delay = max(ai_delay, 0)
+
+            # Record AI decision event for future training
+            game_data.append({'event': 'ai_decision', 'ai_target_y': ai_target_y, 'ai_error': ai_error, 'difficulty': difficulty, 'timestamp': time.time()})
+    else:
+        ai_delay -= 0.02  # Normal decrement of ai_delay
+
+    # Use ai_target_y after it's been defined
+    if abs(paddle_y - ai_target_y) > 30:
+        if paddle_y < ai_target_y:
+            left_paddle_up()
+            # Record AI movement event
+            game_data.append({'event': 'ai_paddle_up', 'paddle_y': paddle_y + 20, 'ball_pos': (ball_x, ball_y), 'timestamp': time.time()})
+        elif paddle_y > ai_target_y:
+            left_paddle_down()
+            # Record AI movement event
+            game_data.append({'event': 'ai_paddle_down', 'paddle_y': paddle_y - 20, 'ball_pos': (ball_x, ball_y), 'timestamp': time.time()})
 
 # Save game data to a file
 def save_data():
@@ -338,57 +372,69 @@ def finalize_game():
 
     reset_game()
 
-# Main game loop modified for graceful exit
-while True:
-    if not game_on:
-        finalize_game()  # Call finalize_game when the game ends
-        break  # If game_on is False, then break the loop and end the game
+def main_game_loop():
+    global game_on, player_score, computer_score  # Declare global variables
 
-    win.update()
+    while True:
+        if not game_on:
+            finalize_game()  # Call finalize_game when the game ends
+            break  # If game_on is False, then break the loop and end the game
 
-    # Move the ball
-    ball.setx(ball.xcor() + ball.dx)
-    ball.sety(ball.ycor() + ball.dy)
+        win.update()
 
-    # Border checking
-    if ball.ycor() > 290 or ball.ycor() < -290:
-        ball.dy *= -1
-    
-    if ball.xcor() > 290:  # Computer scores
-        ball.goto(0, 0)
-        ball.dx *= -1
-        computer_score += 1  # Increment computer's score
-        update_score(player_score, computer_score)
+        # Move the ball
+        ball.setx(ball.xcor() + ball.dx)
+        ball.sety(ball.ycor() + ball.dy)
 
-    if ball.xcor() < -290:  # Player scores
-        ball.goto(0, 0)
-        time.sleep(1)  # Pause for a moment before continuing
-        ball.dx *= 1.05  # Slightly increase ball's speed
-        ball.dy *= 1.05
-        ball.dx = max(ball.dx, 1.5)  # Ensure the ball speed does not go below the starting speed
-        ball.dy = max(ball.dy, 1.5)
-        player_score += 1  # Increment player's score
-        update_score(player_score, computer_score)
-        ball.dx = -ball.dx  # Reset ball direction
+        # Border checking
+        if ball.ycor() > 290 or ball.ycor() < -290:
+            ball.dy *= -1
+        
+        if ball.xcor() > 290:  # Computer scores
+            ball.goto(0, 0)
+            ball.dx *= -1
+            computer_score += 1  # Increment computer's score
+            update_score(player_score, computer_score)
 
-    # Paddle and ball collisions
-    if (ball.xcor() > 240 and ball.xcor() < 250) and (ball.ycor() < right_paddle.ycor() + 50 and ball.ycor() > right_paddle.ycor() - 50):
-        ball.setx(240)
-        ball.dx *= -1
-    
-    if (ball.xcor() < -240 and ball.xcor() > -250) and (ball.ycor() < left_paddle.ycor() + 50 and ball.ycor() > left_paddle.ycor() - 50):
-        ball.setx(-240)
-        ball.dx *= -1
+        if ball.xcor() < -290:  # Player scores
+            ball.goto(0, 0)
+            time.sleep(1)  # Pause for a moment before continuing
+            ball.dx *= 1.05  # Slightly increase ball's speed
+            ball.dy *= 1.05
+            ball.dx = max(ball.dx, 1.5)  # Ensure the ball speed does not go below the starting speed
+            ball.dy = max(ball.dy, 1.5)
+            player_score += 1  # Increment player's score
+            update_score(player_score, computer_score)
+            ball.dx = -ball.dx  # Reset ball direction
 
-    # Update AI paddle movement
-    update_ai_paddle()
+        # Paddle and ball collisions
+        if (ball.xcor() > 240 and ball.xcor() < 250) and (ball.ycor() < right_paddle.ycor() + 50 and ball.ycor() > right_paddle.ycor() - 50):
+            ball.setx(240)
+            ball.dx *= -1
+        
+        if (ball.xcor() < -240 and ball.xcor() > -250) and (ball.ycor() < left_paddle.ycor() + 50 and ball.ycor() > left_paddle.ycor() - 50):
+            ball.setx(-240)
+            ball.dx *= -1
 
-    # Periodically save data, e.g., every 100 events
-    if len(game_data) % 100 == 0:
-        save_data() 
+        # Update AI paddle movement
+        update_ai_paddle()
 
-    # Check for game end condition (e.g., player or computer reaches 10 points)
-    if player_score >= POINTS_NEEDED or computer_score >= POINTS_NEEDED:
-        finalize_game()
+        # Periodically save data, e.g., every 100 events
+        if len(game_data) % 100 == 0:
+            save_data()
+
+        # Check for game end condition (e.g., player or computer reaches 10 points)
+        if player_score >= 10 or computer_score >= 10:
+            finalize_game()
+
+    win.bye()  # Ensure the window is closed properly at the end of the game loop
+
+def main():
+    # Any initialization code you have before the game loop starts
+    main_game_loop()
+
+if __name__ == '__main__':
+    main()
+
 
 win.bye()
