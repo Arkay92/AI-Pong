@@ -472,7 +472,9 @@ def main_game_loop():
         
         if ball.xcor() > 290:  # Computer scores
             ball.goto(0, 0)
-            ball.dx *= -1
+            time.sleep(1)  # Pause for a moment before continuing
+            ball.dx *= -1.05  # Slightly increase ball's speed in negative direction
+            ball.dy *= 1.05  # Increase speed in the y-direction
             computer_score += 1  # Increment computer's score
             update_score(player_score, computer_score)
 
@@ -480,12 +482,10 @@ def main_game_loop():
             ball.goto(0, 0)
             time.sleep(1)  # Pause for a moment before continuing
             ball.dx *= 1.05  # Slightly increase ball's speed
-            ball.dy *= 1.05
-            ball.dx = max(ball.dx, 1.5)  # Ensure the ball speed does not go below the starting speed
-            ball.dy = max(ball.dy, 1.5)
+            ball.dy *= 1.05  # Increase speed in the y-direction
             player_score += 1  # Increment player's score
             update_score(player_score, computer_score)
-            ball.dx = -ball.dx  # Reset ball direction
+            ball.dx = -ball.dx  # Reset ball direction to the left
 
         # Paddle and ball collisions
         if (ball.xcor() > 240 and ball.xcor() < 250) and (ball.ycor() < right_paddle.ycor() + 50 and ball.ycor() > right_paddle.ycor() - 50):
